@@ -162,25 +162,19 @@ func (t *TCCResourceManager) getBusinessActionContext(xid string, branchID int64
 			return nil, fmt.Errorf("decode TCC applicationData: size %d exceeds limit %d", len(applicationData), maxTCCApplicationDataSize)
 		}
 		trimmed := bytes.TrimLeft(applicationData, " \t\r\n")
-		var topLevel json.RawMessage
-		if err := json.Unmarshal(trimmed, &topLevel); err != nil {
+		var tccContext map[string]interface{}
+		if err := json.Unmarshal(trimmed, &tccContext); err != nil {
 			return nil, fmt.Errorf("decode TCC applicationData: invalid JSON: %w", err)
 		}
-		if len(topLevel) == 0 || topLevel[0] != '{' {
+		if len(trimmed) == 0 || trimmed[0] != '{' {
 			return nil, fmt.Errorf("decode TCC applicationData: top-level JSON value must be an object")
 		}
 
-		var tccContext map[string]json.RawMessage
-		if err := json.Unmarshal(topLevel, &tccContext); err != nil {
-			return nil, fmt.Errorf("decode TCC applicationData: invalid JSON: %w", err)
-		}
 		if raw, ok := tccContext[constant.ActionContext]; ok {
-			raw = bytes.TrimLeft(raw, " \t\r\n")
-			if len(raw) == 0 || raw[0] != '{' {
+			if actionContext, ok := raw.(map[string]interface{}); ok {
+				actionContextMap = actionContext
+			} else {
 				return nil, fmt.Errorf("decode TCC applicationData: actionContext must be a JSON object")
-			}
-			if err := json.Unmarshal(raw, &actionContextMap); err != nil {
-				return nil, fmt.Errorf("decode TCC applicationData: actionContext must be a JSON object: %w", err)
 			}
 		}
 	}
