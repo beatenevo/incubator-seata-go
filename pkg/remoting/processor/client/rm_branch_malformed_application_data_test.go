@@ -208,6 +208,79 @@ func TestBranchProcessorsRejectUnknownBranchType(t *testing.T) {
 	}
 }
 
+func TestBranchCommitProcessorsReturnSuccess(t *testing.T) {
+	resourceID := registerMalformedApplicationDataResource(t)
+	for _, protocol := range []string{"seata", "grpc"} {
+		t.Run(protocol, func(t *testing.T) {
+			config.InitTransportConfig(&config.TransportConfig{Protocol: protocol})
+			var captured interface{}
+			processor := &rmBranchCommitProcessor{
+				sendGettyResponse: func(_ int32, response interface{}) error { captured = response; return nil },
+				sendGrpcResponse:  func(_ int32, response interface{}) error { captured = response; return nil },
+			}
+			request := branchCommitMessage(protocolMessageConfig{protocol: protocol}, resourceID)
+			setValidApplicationData(&request, protocol, true)
+			require.NoError(t, processor.Process(context.Background(), request))
+			if protocol == "grpc" {
+				response := captured.(*pb.BranchCommitResponseProto).GetAbstractBranchEndResponse()
+				require.Equal(t, pb.ResultCodeProto_Success, response.GetAbstractTransactionResponse().GetAbstractResultMessage().GetResultCode())
+				require.Equal(t, int32(branch.BranchStatusPhasetwoCommitted), int32(response.GetBranchStatus()))
+			} else {
+				response := captured.(message.BranchCommitResponse).AbstractBranchEndResponse
+				require.Equal(t, message.ResultCodeSuccess, response.AbstractTransactionResponse.AbstractResultMessage.ResultCode)
+				require.Equal(t, branch.BranchStatus(branch.BranchStatusPhasetwoCommitted), response.BranchStatus)
+			}
+		})
+	}
+}
+
+func TestBranchRollbackProcessorsReturnSuccess(t *testing.T) {
+	resourceID := registerMalformedApplicationDataResource(t)
+	for _, protocol := range []string{"seata", "grpc"} {
+		t.Run(protocol, func(t *testing.T) {
+			config.InitTransportConfig(&config.TransportConfig{Protocol: protocol})
+			var captured interface{}
+			processor := &rmBranchRollbackProcessor{
+				sendGettyResponse: func(_ int32, response interface{}) error { captured = response; return nil },
+				sendGrpcResponse:  func(_ int32, response interface{}) error { captured = response; return nil },
+			}
+			request := branchRollbackMessage(protocolMessageConfig{protocol: protocol}, resourceID)
+			setValidApplicationData(&request, protocol, false)
+			require.NoError(t, processor.Process(context.Background(), request))
+			if protocol == "grpc" {
+				response := captured.(*pb.BranchRollbackResponseProto).GetAbstractBranchEndResponse()
+				require.Equal(t, pb.ResultCodeProto_Success, response.GetAbstractTransactionResponse().GetAbstractResultMessage().GetResultCode())
+				require.Equal(t, int32(branch.BranchStatusPhasetwoRollbacked), int32(response.GetBranchStatus()))
+			} else {
+				response := captured.(message.BranchRollbackResponse).AbstractBranchEndResponse
+				require.Equal(t, message.ResultCodeSuccess, response.AbstractTransactionResponse.AbstractResultMessage.ResultCode)
+				require.Equal(t, branch.BranchStatus(branch.BranchStatusPhasetwoRollbacked), response.BranchStatus)
+			}
+		})
+	}
+}
+
+func setValidApplicationData(request *message.RpcMessage, protocol string, commit bool) {
+	data := `{"actionContext":{}}`
+	if protocol == "grpc" {
+		if commit {
+			request.Body.(*pb.BranchCommitRequestProto).AbstractBranchEndRequest.ApplicationData = data
+		} else {
+			request.Body.(*pb.BranchRollbackRequestProto).AbstractBranchEndRequest.ApplicationData = data
+		}
+		return
+	}
+	if commit {
+		body := request.Body.(message.BranchCommitRequest)
+		body.ApplicationData = []byte(data)
+		request.Body = body
+	} else {
+		body := request.Body.(message.BranchRollbackRequest)
+		body.ApplicationData = []byte(data)
+		request.Body = body
+	}
+}
+
 func setUnknownBranchType(request *message.RpcMessage) {
 	switch body := request.Body.(type) {
 	case *pb.BranchCommitRequestProto:

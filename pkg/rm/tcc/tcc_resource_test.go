@@ -128,6 +128,17 @@ type malformedInputTCCAction struct {
 	rollbackCalls atomic.Int32
 }
 
+type phaseErrorTCCAction struct{}
+
+func (*phaseErrorTCCAction) Prepare(context.Context, interface{}) (bool, error) { return true, nil }
+func (*phaseErrorTCCAction) Commit(context.Context, *tm.BusinessActionContext) (bool, error) {
+	return false, assert.AnError
+}
+func (*phaseErrorTCCAction) Rollback(context.Context, *tm.BusinessActionContext) (bool, error) {
+	return false, assert.AnError
+}
+func (*phaseErrorTCCAction) GetActionName() string { return "phase-error-action" }
+
 func (a *malformedInputTCCAction) Prepare(context.Context, interface{}) (bool, error) {
 	return true, nil
 }
@@ -183,6 +194,26 @@ func TestBranchPhaseMissingResourceReturnsFailureStatus(t *testing.T) {
 	rollbackStatus, err := manager.BranchRollback(context.Background(), rm.BranchResource{ResourceId: "missing-rollback-resource"})
 	assert.Error(t, err)
 	assert.Equal(t, branch.BranchStatus(branch.BranchStatusPhasetwoRollbackFailedUnretryable), rollbackStatus)
+}
+
+func TestBranchPhaseCallbackErrorsRemainRetryable(t *testing.T) {
+	resource, err := ParseTCCResource(&phaseErrorTCCAction{})
+	assert.NoError(t, err)
+	manager := GetTCCResourceManagerInstance()
+	manager.resourceManagerMap.Store(resource.GetResourceId(), resource)
+	t.Cleanup(func() { manager.resourceManagerMap.Delete(resource.GetResourceId()) })
+
+	commitStatus, err := manager.BranchCommit(context.Background(), rm.BranchResource{
+		ResourceId: resource.GetResourceId(), ApplicationData: []byte(`{"actionContext":{}}`),
+	})
+	assert.Error(t, err)
+	assert.Equal(t, branch.BranchStatus(branch.BranchStatusPhasetwoCommitFailedRetryable), commitStatus)
+
+	rollbackStatus, err := manager.BranchRollback(context.Background(), rm.BranchResource{
+		ResourceId: resource.GetResourceId(), ApplicationData: []byte(`{"actionContext":{}}`),
+	})
+	assert.Error(t, err)
+	assert.Equal(t, branch.BranchStatus(branch.BranchStatusPhasetwoRollbackFailedRetryable), rollbackStatus)
 }
 
 // TestBranchReport
